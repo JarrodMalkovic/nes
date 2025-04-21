@@ -9,14 +9,33 @@ import './App.css'
 
 // Create a simple default ROM (e.g., 1 bank of NOPs)
 const createDefaultRom = () => {
-  const prgBank = new Uint8Array(16 * 1024).fill(0xEA); // NOP
+  // 1 × 16 KB PRG bank: infinite loop at $8000
+  const prg = new Uint8Array(16 * 1024)
+  // JMP $8000 (0x4C low high), then fill rest with NOPs
+  prg.set([0x4C, 0x00, 0x80], 0)
+  prg.fill(0xEA, 3)
+
+  // 1 × 8 KB CHR bank: checkerboard pattern
+  const chr = new Uint8Array(8 * 1024)
+  // there are 512 tiles (16 bytes each) in 8 KB
+  for (let tile = 0; tile < 512; tile++) {
+    const base = tile * 16
+    for (let row = 0; row < 8; row++) {
+      // plane0: alternate rows full/empty → horizontal stripes
+      chr[base + row]     = row % 2 === 0 ? 0xFF : 0x00
+      // plane1: leave zero so palette index is 0 or 1
+      chr[base + 8 + row] = 0x00
+    }
+  }
+
   return createFakeNromRom({
     numPrgBanks: 1,
-    prgData: [prgBank],
+    prgData: [prg],
+    numChrBanks: 1,
+    chrData: [chr],
     resetVector: 0x8000,
-  });
-};
-
+  })
+}
 function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [consoleInstance, setConsoleInstance] = useState<NesConsole | null>(null);
@@ -104,9 +123,9 @@ function App() {
         )}
       </div>
       {/* Basic info display */}
-      {/* {consoleInstance && (
+      {consoleInstance && (
         <p>Cartridge loaded ({consoleInstance.cartridge.prgBanks.length} PRG banks)</p>
-      )} */}
+      )}
     </>
   )
 }
