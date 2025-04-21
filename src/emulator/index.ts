@@ -1,10 +1,13 @@
 import { CPU } from './cpu';
 import { Memory } from './memory';
 import { Cartridge } from './cartridge';
-import { PPU } from './ppu';
+import { PPU, SCREEN_WIDTH, SCREEN_HEIGHT } from './ppu';
 import { Clock } from './clock';
 // Import Controller if needed later for input handling
 // import { Controller } from './controller';
+
+// Re-export constants needed by the UI
+export { SCREEN_WIDTH, SCREEN_HEIGHT };
 
 export class NesConsole {
   public readonly cpu: CPU;

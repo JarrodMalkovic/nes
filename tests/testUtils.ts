@@ -1,5 +1,5 @@
 const PRG_BANK_SIZE = 16 * 1024;
-const CHR_BANK_SIZE = 8 * 1024;
+// const CHR_BANK_SIZE = 8 * 1024; // Removed as unused for NROM helper
 const TRAINER_SIZE = 512;
 
 interface RomOptions {

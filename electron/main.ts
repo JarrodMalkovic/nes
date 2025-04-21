@@ -9,9 +9,13 @@ import path from 'node:path';
 // │ └── index.html > Electron-Renderer
 //
 process.env.DIST = path.join(__dirname, '../dist');
+// Ensure VITE_PUBLIC is defined or default to DIST
 process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? path.join(process.env.DIST, '../public')
   : process.env.DIST;
+
+const distPath = process.env.DIST ?? ''; // Provide default empty string
+const publicPath = process.env.VITE_PUBLIC ?? ''; // Provide default empty string
 
 let win: BrowserWindow | null;
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -34,7 +38,8 @@ app.on('activate', () => {
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    // Use publicPath with a fallback icon name if needed
+    icon: path.join(publicPath, 'electron-vite.svg'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production
@@ -53,8 +58,8 @@ function createWindow() {
     // Open devTool if the app is not packaged
     win.webContents.openDevTools();
   } else {
-    // Load your file
-    win.loadFile(path.join(process.env.DIST, 'index.html'));
+    // Use distPath
+    win.loadFile(path.join(distPath, 'index.html'));
   }
 }
 

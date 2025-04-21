@@ -1,5 +1,5 @@
 const PRG_BANK_SIZE = 16 * 1024; // 16KB
-const CHR_BANK_SIZE = 8 * 1024;  // 8KB
+// const CHR_BANK_SIZE = 8 * 1024;  // 8KB - Commented out as unused
 const TRAINER_SIZE = 512;
 
 export class Cartridge {
@@ -20,7 +20,7 @@ export class Cartridge {
     }
 
     const numPrgBanks = romData[4];
-    const numChrBanks = romData[5]; // Needed for offset calculation
+    // const _numChrBanks = romData[5]; // Removed as unused for now
     const flags6 = romData[6];
     // const flags7 = romData[7];
     // const flags8 = romData[8]; // PRG RAM size

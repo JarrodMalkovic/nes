@@ -21,9 +21,6 @@ export class Memory {
       return this.ram[addr % 0x0800];
     } else if (addr >= 0x2000 && addr < 0x4000) {
       // PPU registers (0x2000-0x2007), mirrored every 8 bytes
-      const registerIndex = (addr - 0x2000) % 8;
-      // Stubbed read: always return 0 for now
-      // console.log(`Read from PPU register ${registerIndex.toString(16)} at address ${addr.toString(16)}`);
       return 0;
     } else if (addr >= 0x8000) {
       // Cartridge PRG ROM space (0x8000-0xFFFF)
@@ -63,9 +60,7 @@ export class Memory {
       this.ram[addr % 0x0800] = val;
     } else if (addr >= 0x2000 && addr < 0x4000) {
       // PPU registers (0x2000-0x2007), mirrored every 8 bytes
-      const registerIndex = (addr - 0x2000) % 8;
-      // Stubbed write: do nothing for now
-      // console.log(`Write to PPU register ${registerIndex.toString(16)} value ${val.toString(16)} at address ${addr.toString(16)}`);
+      return;
     } else if (addr >= 0x8000) {
       // Attempted write to PRG ROM space - typically ignored for NROM
       // console.warn(`Write to PRG ROM space ignored: 0x${addr.toString(16)} = 0x${val.toString(16)}`);

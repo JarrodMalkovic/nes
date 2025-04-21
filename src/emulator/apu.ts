@@ -63,8 +63,8 @@ export class APU {
     return this.status;
   }
 
-  writeRegister(address: number, value: number): void {
+  writeRegister(_address: number, _value: number): void {
     // TODO: Implement writes to APU registers ($4000-$4017)
-    // console.log(`APU write to ${address.toString(16)}: ${value.toString(16)}`);
+    // console.log(`APU write to ${_address.toString(16)}: ${_value.toString(16)}`);
   }
 } 
