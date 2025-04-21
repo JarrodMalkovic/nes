@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.node.json",
+  "compilerOptions": {
+    "outDir": "../dist-electron",
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.electron.tsbuildinfo",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true
+  },
+  "include": [
+    "./**/*.ts"
+  ],
+  "exclude": [
+    "../node_modules",
+    "../dist",
+    "../dist-electron"
+  ]
+} 

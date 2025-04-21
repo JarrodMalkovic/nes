@@ -1,0 +1,42 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+File‑first prompts
+– Always start prompts by naming the target file(s) (e.g. src/emulator/cpu.ts, tests/cpu.spec.ts).
+– For updates, specify the exact path to modify.
+
+Implement + Test
+– Any feature prompt must ask for both implementation and its Vitest tests.
+– Tests live under tests/ mirroring src/ structure.
+
+TypeScript strict
+– All code in src/ must compile under tsconfig.json with "strict": true.
+– No any unless explicitly justified in a comment.
+
+Import aliases
+– Use Vite aliases (e.g. import { CPU } from '@src/emulator/cpu').
+– Keep relative paths only within the same folder.
+
+Naming conventions
+– Source files: camelCase.ts(x) or PascalCase.ts(x) for classes/components.
+– Tests: same basename with .spec.ts.
+
+One concern per file
+– CPU, Memory, PPU, etc. each get their own file and paired test.
+– Shared types/utilities go under src/common/.
+
+Electron security
+– Never enable nodeIntegration in renderer.
+– All IPC in preload.ts must be explicitly whitelisted.
+
+Prompt style
+– Use imperative language (“Create…”, “Implement…”, “Write tests that…”).
+– Include any edge cases to cover in tests.
+
+Commit note guidance
+– After each Cursor run, commit with feat: add <module> or test: add tests for <module>.
+
+Iterate in order
+– Don’t skip ahead—only move to the next subsystem once tests for the current one pass.
