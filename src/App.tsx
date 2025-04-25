@@ -22,7 +22,7 @@ const createDefaultRom = () => {
     const base = tile * 16
     for (let row = 0; row < 8; row++) {
       // plane0: alternate rows full/empty → horizontal stripes
-      chr[base + row]     = row % 2 === 0 ? 0xFF : 0x00
+      chr[base + row] = row % 2 === 0 ? 0xFF : 0x00
       // plane1: leave zero so palette index is 0 or 1
       chr[base + 8 + row] = 0x00
     }
@@ -52,9 +52,9 @@ function App() {
     if (canvasRef.current) {
       ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
       if (ctxRef.current) {
-         // Initial black screen draw
-         ctxRef.current.fillStyle = 'black';
-         ctxRef.current.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        // Initial black screen draw
+        ctxRef.current.fillStyle = 'black';
+        ctxRef.current.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
       }
     }
   }, []);
@@ -105,12 +105,12 @@ function App() {
       // Read the ROM file
       const buffer = await file.arrayBuffer();
       const romData = new Uint8Array(buffer);
-      
+
       // Create new console instance with the ROM
       const newConsole = new NesConsole(romData);
       setConsoleInstance(newConsole);
       setRomName(file.name);
-      
+
       // Auto-start the emulator
       setIsRunning(true);
     } catch (error) {
@@ -145,7 +145,7 @@ function App() {
   return (
     <div className="emulator-container">
       <h1>NES Emulator</h1>
-      
+
       <div className="rom-controls">
         <input
           ref={fileInputRef}
@@ -154,7 +154,7 @@ function App() {
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />
-        <button 
+        <button
           onClick={() => fileInputRef.current?.click()}
           className="load-rom-btn"
         >
@@ -173,12 +173,11 @@ function App() {
           ref={canvasRef}
           width={SCREEN_WIDTH}
           height={SCREEN_HEIGHT}
-          style={{ 
-            border: '1px solid grey', 
-            imageRendering: 'pixelated', 
-            width: SCREEN_WIDTH*2, 
-            height: SCREEN_HEIGHT*2,
-            backgroundColor: 'black' 
+          style={{
+            border: '1px solid grey',
+            imageRendering: 'pixelated',
+            width: SCREEN_WIDTH * 2,
+            height: SCREEN_HEIGHT * 2,
           }}
         />
       </div>
