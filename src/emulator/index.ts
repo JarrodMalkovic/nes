@@ -19,10 +19,9 @@ export class NesConsole {
 
   constructor(romData: Uint8Array) {
     this.cartridge = new Cartridge(romData);
-    this.memory = new Memory();
-    this.memory.loadCartridge(this.cartridge);
+    this.memory = new Memory(this.cartridge);
     this.cpu = new CPU(this.memory);
-    this.ppu = new PPU(); // Instantiate PPU
+    this.ppu = new PPU(this.memory); // Instantiate PPU
     this.clock = new Clock(this.cpu, this.ppu); // Instantiate Clock
     // this.controller1 = new Controller(); // Instantiate Controller later
 

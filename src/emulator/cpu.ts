@@ -262,29 +262,59 @@ export class CPU {
   }
 
   // --- Bit Operation Helpers ---
-  private and(value: number): number {
+  private and(value: number): void {
     this.A &= value;
     this.updateZeroNegativeFlags(this.A);
-    return 2; // Base cycle count for AND operation
   }
 
-  private ora(value: number): number {
-    this.A |= value;
-    this.updateZeroNegativeFlags(this.A);
-    return 2; // Base cycle count for ORA operation
+  // Arithmetic Shift Left
+  private asl(value: number): number {
+    const carry = (value & 0x80) !== 0;
+    value = (value << 1) & 0xFF;
+    this.setFlag(CpuFlags.Carry, carry);
+    this.updateZeroNegativeFlags(value);
+    return value;
   }
 
-  private eor(value: number): number {
-    this.A ^= value;
-    this.updateZeroNegativeFlags(this.A);
-    return 2; // Base cycle count for EOR operation
+  // Logical Shift Right
+  private lsr(value: number): number {
+    const carry = (value & 0x01) !== 0;
+    value = (value >> 1) & 0xFF;
+    this.setFlag(CpuFlags.Carry, carry);
+    this.updateZeroNegativeFlags(value);
+    return value;
   }
 
+  // Rotate Left
+  private rol(value: number): number {
+    const oldCarry = this.getFlag(CpuFlags.Carry);
+    const carry = (value & 0x80) !== 0;
+    value = ((value << 1) | Number(oldCarry)) & 0xFF;
+    this.setFlag(CpuFlags.Carry, carry);
+    this.updateZeroNegativeFlags(value);
+    return value;
+  }
+
+  // Rotate Right
+  private ror(value: number): number {
+    const oldCarry = this.getFlag(CpuFlags.Carry);
+    const carry = (value & 0x01) !== 0;
+    value = ((value >> 1) | (Number(oldCarry) << 7)) & 0xFF;
+    this.setFlag(CpuFlags.Carry, carry);
+    this.updateZeroNegativeFlags(value);
+    return value;
+  }
+
+  // Bit Test
   private bit(value: number): void {
-    const result = this.A & value;
-    this.setFlag(CpuFlags.Zero, result === 0);
+    this.setFlag(CpuFlags.Zero, (this.A & value) === 0);
     this.setFlag(CpuFlags.Overflow, (value & 0x40) !== 0);
     this.setFlag(CpuFlags.Negative, (value & 0x80) !== 0);
+  }
+
+  private eor(value: number): void {
+    this.A ^= value;
+    this.updateZeroNegativeFlags(this.A);
   }
 
   // --- Increment/Decrement Helpers ---
@@ -298,41 +328,6 @@ export class CPU {
     const value = (this.memory.read(addr) - 1) & 0xFF;
     this.memory.write(addr, value);
     this.updateZeroNegativeFlags(value);
-  }
-
-  // --- Shift and Rotate Helpers ---
-  private asl(value: number): number {
-    const result = (value << 1) & 0xFF;
-    this.setFlag(CpuFlags.Carry, (value & 0x80) !== 0);
-    this.setFlag(CpuFlags.Zero, result === 0);
-    this.setFlag(CpuFlags.Negative, (result & 0x80) !== 0);
-    return result;
-  }
-
-  private lsr(value: number): number {
-    const result = value >> 1;
-    this.setFlag(CpuFlags.Carry, (value & 0x01) !== 0);
-    this.setFlag(CpuFlags.Zero, result === 0);
-    this.setFlag(CpuFlags.Negative, false);
-    return result;
-  }
-
-  private rol(value: number): number {
-    const oldCarry = this.getFlag(CpuFlags.Carry) ? 1 : 0;
-    const result = ((value << 1) | oldCarry) & 0xFF;
-    this.setFlag(CpuFlags.Carry, (value & 0x80) !== 0);
-    this.setFlag(CpuFlags.Zero, result === 0);
-    this.setFlag(CpuFlags.Negative, (result & 0x80) !== 0);
-    return result;
-  }
-
-  private ror(value: number): number {
-    const oldCarry = this.getFlag(CpuFlags.Carry) ? 0x80 : 0;
-    const result = (value >> 1) | oldCarry;
-    this.setFlag(CpuFlags.Carry, (value & 0x01) !== 0);
-    this.setFlag(CpuFlags.Zero, result === 0);
-    this.setFlag(CpuFlags.Negative, (result & 0x80) !== 0);
-    return result;
   }
 
   // --- Helper for checking page boundary crossing ---
@@ -1587,91 +1582,6 @@ export class CPU {
         const addr = cpu.operandAbsolute();
         const value = cpu.memory.read(addr);
         cpu.bit(value);
-      }
-    };
-
-    // --- Status Flag Instructions ---
-
-    // CLC - Clear Carry Flag
-    this.instructions[0x18] = {
-      bytes: 1,
-      cycles: 2,
-      execute: (cpu) => {
-        cpu.setFlag(CpuFlags.Carry, false);
-      }
-    };
-
-    // SEC - Set Carry Flag
-    this.instructions[0x38] = {
-      bytes: 1,
-      cycles: 2,
-      execute: (cpu) => {
-        cpu.setFlag(CpuFlags.Carry, true);
-      }
-    };
-
-    // CLV - Clear Overflow Flag
-    this.instructions[0xB8] = {
-      bytes: 1,
-      cycles: 2,
-      execute: (cpu) => {
-        cpu.setFlag(CpuFlags.Overflow, false);
-      }
-    };
-
-    // CLD - Clear Decimal Mode
-    this.instructions[0xD8] = {
-      bytes: 1,
-      cycles: 2,
-      execute: (cpu) => {
-        cpu.setFlag(CpuFlags.Decimal, false);
-      }
-    };
-
-    // SED - Set Decimal Mode
-    this.instructions[0xF8] = {
-      bytes: 1,
-      cycles: 2,
-      execute: (cpu) => {
-        cpu.setFlag(CpuFlags.Decimal, true);
-      }
-    };
-
-    // --- Additional Jump & Call Instructions ---
-
-    // JSR - Jump to Subroutine
-    this.instructions[0x20] = {
-      bytes: 3,
-      cycles: 6,
-      execute: (cpu) => {
-        const targetAddr = cpu.operandAbsolute();
-        // Push address of next instruction - 1
-        cpu.pushWord(cpu.PC - 1);
-        cpu.PC = targetAddr;
-      }
-    };
-
-    // RTS - Return from Subroutine
-    this.instructions[0x60] = {
-      bytes: 1,
-      cycles: 6,
-      execute: (cpu) => {
-        // Pull return address and add 1
-        cpu.PC = (cpu.pullWord() + 1) & 0xFFFF;
-      }
-    };
-
-    // JMP - Indirect
-    this.instructions[0x6C] = {
-      bytes: 3,
-      cycles: 5,
-      execute: (cpu) => {
-        const addr = cpu.fetchWord();
-        // 6502 bug: If indirect vector falls on a page boundary (e.g. $xxFF)
-        // the second byte is fetched from the beginning of the page rather than the next page
-        const lo = cpu.memory.read(addr);
-        const hi = cpu.memory.read((addr & 0xFF00) | ((addr + 1) & 0xFF));
-        cpu.PC = (hi << 8) | lo;
       }
     };
   }

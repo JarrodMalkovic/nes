@@ -1,72 +1,118 @@
-import { Cartridge } from './cartridge';
+import { Cartridge, MirroringMode } from './cartridge';
 
 export class Memory {
-  private ram: Uint8Array;
-  private cartridge: Cartridge | null = null;
+  private ram: Uint8Array;        // 2KB internal RAM
+  private cartridge: Cartridge;   // Cartridge reference
+  private ppuRegisters: Uint8Array; // PPU registers ($2000-$2007, mirrored)
+  private apuRegisters: Uint8Array; // APU and I/O registers ($4000-$4017)
 
-  constructor() {
-    // 2KB of internal RAM
-    this.ram = new Uint8Array(0x0800);
-  }
-
-  loadCartridge(cartridge: Cartridge): void {
+  constructor(cartridge: Cartridge) {
+    this.ram = new Uint8Array(2048);        // 2KB internal RAM
+    this.ppuRegisters = new Uint8Array(8);  // 8 PPU registers
+    this.apuRegisters = new Uint8Array(24); // 24 APU/IO registers
     this.cartridge = cartridge;
   }
 
   read(address: number): number {
-    const addr = address & 0xFFFF;
+    address &= 0xFFFF; // Ensure 16-bit address
 
-    if (addr < 0x2000) {
-      // RAM range (0x0000-0x1FFF), mirrored every 0x800 bytes
-      return this.ram[addr % 0x0800];
-    } else if (addr >= 0x2000 && addr < 0x4000) {
-      // PPU registers (0x2000-0x2007), mirrored every 8 bytes
-      return 0;
-    } else if (addr >= 0x8000) {
-      // Cartridge PRG ROM space (0x8000-0xFFFF)
-      if (!this.cartridge) {
-        // console.warn(`Read from cartridge space (0x${addr.toString(16)}) with no cartridge loaded`);
-        return 0;
-      }
-      // Simple NROM mapping (Mapper 0)
-      const numPrgBanks = this.cartridge.prgBanks.length;
-      if (numPrgBanks === 1) {
-        // 16KB PRG ROM, mirrored at 0xC000
-        const prgAddress = (addr - 0x8000) % 0x4000; // Map 0x8000-0xFFFF -> 0x0000-0x3FFF
-        return this.cartridge.prgBanks[0][prgAddress];
-      } else if (numPrgBanks === 2) {
-        // 32KB PRG ROM
-        const prgAddress = addr - 0x8000; // Map 0x8000-0xFFFF -> 0x0000-0x7FFF
-        const bankIndex = Math.floor(prgAddress / (16 * 1024));
-        const offsetInBank = prgAddress % (16 * 1024);
-        return this.cartridge.prgBanks[bankIndex][offsetInBank];
-      } else {
-        // console.warn(`Unsupported number of PRG banks (${numPrgBanks}) for NROM mapping`);
-        return 0;
-      }
-    } else {
-      // Unhandled reads (e.g., APU/IO 0x4000-0x401F, Expansion ROM 0x4020-0x5FFF, SRAM 0x6000-0x7FFF)
-      // console.log(`Read from unhandled address 0x${addr.toString(16)}`);
+    // CPU Internal RAM ($0000-$1FFF)
+    if (address < 0x2000) {
+      return this.ram[address & 0x07FF]; // Mirror every 2KB
+    }
+
+    // PPU Registers ($2000-$3FFF)
+    if (address < 0x4000) {
+      return this.ppuRegisters[address & 0x0007]; // Mirror every 8 bytes
+    }
+
+    // APU and I/O registers ($4000-$4017)
+    if (address < 0x4018) {
+      return this.apuRegisters[address - 0x4000];
+    }
+
+    // APU and I/O functionality that is normally disabled ($4018-$401F)
+    if (address < 0x4020) {
       return 0;
     }
+
+    // Cartridge space ($4020-$FFFF)
+    return this.cartridge.readPrg(address);
   }
 
   write(address: number, value: number): void {
-    const addr = address & 0xFFFF;
-    const val = value & 0xFF;
+    address &= 0xFFFF; // Ensure 16-bit address
+    value &= 0xFF;     // Ensure 8-bit value
 
-    if (addr < 0x2000) {
-      // RAM range (0x0000-0x1FFF), mirrored every 0x800 bytes
-      this.ram[addr % 0x0800] = val;
-    } else if (addr >= 0x2000 && addr < 0x4000) {
-      // PPU registers (0x2000-0x2007), mirrored every 8 bytes
+    // CPU Internal RAM ($0000-$1FFF)
+    if (address < 0x2000) {
+      this.ram[address & 0x07FF] = value; // Mirror every 2KB
       return;
-    } else if (addr >= 0x8000) {
-      // Attempted write to PRG ROM space - typically ignored for NROM
-      // console.warn(`Write to PRG ROM space ignored: 0x${addr.toString(16)} = 0x${val.toString(16)}`);
-    } else {
-      // Unhandled writes (e.g., APU/IO, SRAM)
-      // console.log(`Write to unhandled address 0x${addr.toString(16)} value 0x${val.toString(16)}`);
     }
+
+    // PPU Registers ($2000-$3FFF)
+    if (address < 0x4000) {
+      this.ppuRegisters[address & 0x0007] = value; // Mirror every 8 bytes
+      return;
+    }
+
+    // APU and I/O registers ($4000-$4017)
+    if (address < 0x4018) {
+      this.apuRegisters[address - 0x4000] = value;
+      return;
+    }
+
+    // APU and I/O functionality that is normally disabled ($4018-$401F)
+    if (address < 0x4020) {
+      return;
+    }
+
+    // Cartridge space ($4020-$FFFF)
+    this.cartridge.writePrg(address, value);
+  }
+
+  // Get a reference to the cartridge
+  getCartridge(): Cartridge {
+    return this.cartridge;
+  }
+
+  // Map a PPU address to physical address based on mirroring mode
+  mapPpuAddress(address: number): number {
+    address &= 0x3FFF; // PPU can only address 14 bits
+
+    // Pattern tables ($0000-$1FFF)
+    if (address < 0x2000) {
+      return address;
+    }
+
+    // Nametables ($2000-$2FFF)
+    if (address < 0x3000) {
+      const mirroringMode = this.cartridge.getMirroringMode();
+      const nameTable = (address - 0x2000) >> 10; // Which nametable (0-3)
+      const offset = address & 0x3FF; // Offset within nametable
+
+      switch (mirroringMode) {
+        case MirroringMode.Horizontal:
+          // 0,1 => 0; 2,3 => 1
+          return 0x2000 + (nameTable & 2 ? 0x800 : 0) + offset;
+        case MirroringMode.Vertical:
+          // 0,2 => 0; 1,3 => 1
+          return 0x2000 + (nameTable & 1 ? 0x800 : 0) + offset;
+        case MirroringMode.SingleScreenLow:
+          return 0x2000 + offset;
+        case MirroringMode.SingleScreenHigh:
+          return 0x2800 + offset;
+        case MirroringMode.FourScreen:
+          return address;
+      }
+    }
+
+    // Mirror of $2000-$2EFF ($3000-$3EFF)
+    if (address < 0x3F00) {
+      return this.mapPpuAddress(address - 0x1000);
+    }
+
+    // Palette RAM indexes ($3F00-$3FFF)
+    return 0x3F00 + (address & 0x1F);
   }
 } 

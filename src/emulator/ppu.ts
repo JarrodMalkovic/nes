@@ -1,3 +1,5 @@
+import { Memory } from './memory';
+
 export const SCREEN_WIDTH = 256;
 export const SCREEN_HEIGHT = 240;
 
@@ -21,132 +23,176 @@ const PPUADDR = 0x2006;   // $2006 Address
 const PPUDATA = 0x2007;   // $2007 Data
 
 export class PPU {
-  // PPU Memory
-  private vram: Uint8Array;       // 16KB of VRAM
-  private oamMemory: Uint8Array;  // 256 bytes of Object Attribute Memory
-  private paletteRam: Uint8Array; // 32 bytes of Palette RAM
+  // Static palette data
+  static readonly PALETTE: number[] = [
+    0x7C7C7C, 0x0000FC, 0x0000BC, 0x4428BC, 0x940084, 0xA80020, 0xA81000, 0x881400,
+    0x503000, 0x007800, 0x006800, 0x005800, 0x004058, 0x000000, 0x000000, 0x000000,
+    0xBCBCBC, 0x0078F8, 0x0058F8, 0x6844FC, 0xD800CC, 0xE40058, 0xF83800, 0xE45C10,
+    0xAC7C00, 0x00B800, 0x00A800, 0x00A844, 0x008888, 0x000000, 0x000000, 0x000000
+  ];
 
-  // PPU Registers
-  private ctrl: number;     // PPUCTRL   ($2000) write
-  private mask: number;     // PPUMASK   ($2001) write
-  private status: number;   // PPUSTATUS ($2002) read
-  private oamAddr: number;  // OAMADDR   ($2003) write
-  private scroll: number;   // PPUSCROLL ($2005) write x2
-  private addr: number;     // PPUADDR   ($2006) write x2
-  private data: number;     // PPUDATA   ($2007) read/write
-
-  // Internal registers
-  private v: number;  // Current VRAM address (15 bits)
-  private t: number;  // Temporary VRAM address (15 bits)
-  private x: number;  // Fine X scroll (3 bits)
-  private w: boolean; // First or second write toggle
-
-  // Rendering state
-  private scanline: number;
-  private cycle: number;
-  private frame: number;
+  private memory: Memory;
+  private vram: Uint8Array;
+  private oam: Uint8Array;
   private frameBuffer: Uint8ClampedArray;
+  private paletteRam: Uint8Array;  // 32 bytes of palette RAM
+  private cycle = 0;
+  private scanline = 0;
+  private frame = 0;
+  private nmiOccurred = 0;  // Using 0/1 instead of boolean for NES accuracy
 
-  // NMI Flag
-  private nmiOccurred: boolean;
-  private nmiOutput: boolean;
-  private nmiPrevious: boolean;
-  private nmiDelay: number;
+  // PPU registers
+  private ctrl = 0;     // Control register ($2000)
+  private mask = 0;     // Mask register ($2001)
+  private status = 0;   // Status register ($2002)
+  private data = 0;     // Data register ($2007)
+  private v = 0;        // Current VRAM address (15 bits)
+  private t = 0;        // Temporary VRAM address (15 bits)
+  private x = 0;        // Fine X scroll (3 bits)
+  private w = 0;        // First or second write toggle (1 bit)
+  private oamAddr = 0;  // OAM address register ($2003)
+  private nmiOutput = 0;// NMI output level
 
-  // NES Color Palette (RGB values)
-  private static readonly PALETTE = new Uint32Array([
-    0xFF757575, 0xFF271B8F, 0xFF0000AB, 0xFF47009F, 0xFF8F0077, 0xFFAB0013, 0xFFA70000, 0xFF7F0B00,
-    0xFF432F00, 0xFF004700, 0xFF005100, 0xFF003F17, 0xFF1B3F5F, 0xFF000000, 0xFF000000, 0xFF000000,
-    0xFFBCBCBC, 0xFF0073EF, 0xFF233BEF, 0xFF8300F3, 0xFFBF00BF, 0xFFE7005B, 0xFFDB2B00, 0xFFCB4F0F,
-    0xFF8B7300, 0xFF009700, 0xFF00AB00, 0xFF00933B, 0xFF00838B, 0xFF000000, 0xFF000000, 0xFF000000,
-    0xFFFFFFFF, 0xFF3FBFFF, 0xFF5F97FF, 0xFFA78BFD, 0xFFF77BFF, 0xFFFF77B7, 0xFFFF7763, 0xFFFF9B3B,
-    0xFFF3BF3F, 0xFF83D313, 0xFF4FDF4B, 0xFF58F898, 0xFF00EBDB, 0xFF000000, 0xFF000000, 0xFF000000,
-    0xFFFFFFFF, 0xFFABE7FF, 0xFFC7D7FF, 0xFFD7CBFF, 0xFFFFC7FF, 0xFFFFC7DB, 0xFFFFBFB3, 0xFFFFDBAB,
-    0xFFFFE7A3, 0xFFE3FFA3, 0xFFABF3BF, 0xFFB3FFCF, 0xFF9FFFF3, 0xFF000000, 0xFF000000, 0xFF000000
-  ]);
+  // Background shift registers and tile data
+  private bgShiftRegLow = 0;
+  private bgShiftRegHigh = 0;
+  private bgAttrShiftLow = 0;
+  private bgAttrShiftHigh = 0;
+  private bgTileLow = 0;
+  private bgTileHigh = 0;
+
+  // Sprite evaluation state
+  private spriteCount = 0;
+  private spriteZeroHitPossible = 0;
+  private spritePositions: number[] = new Array(8).fill(0);
+  private spritePatterns: number[] = new Array(8).fill(0);
+  private spriteAttributes: number[] = new Array(8).fill(0);
+  private spriteIndexes: number[] = new Array(8).fill(0);
 
   // Background rendering state
-  private bgPatternTable: number;    // Pattern table selection for background (0 or 1)
-  private bgNameTable: number;       // Base nametable address
-  private bgTileLow: number;        // Low byte of background tile
-  private bgTileHigh: number;       // High byte of background tile
-  private bgAttributeLatch: number; // Current attribute byte
-  private bgShiftRegLow: number;    // Low background shift register
-  private bgShiftRegHigh: number;   // High background shift register
-  private bgAttrShiftLow: number;   // Low attribute shift register
-  private bgAttrShiftHigh: number;  // High attribute shift register
+  private bgAttributeLatch = 0;
+  private bgNameTable = 0;
+  private bgPatternTable = 0;
 
-  // Sprite rendering state
-  private spritePatternTable: number;   // Pattern table selection for sprites (0 or 1)
-  private spriteSize: boolean;          // false = 8x8, true = 8x16
-  private spriteCount: number;          // Number of sprites on current scanline
-  private spriteZeroHitPossible: boolean;
-  private spriteZeroBeingRendered: boolean;
+  // PPU registers and flags
+  private nmiEnabled = 0;
+  private masterSlave = 0;
+  private spriteSize = 0;
+  private bgPatternAddr = 0;
+  private grayscale = 0;
+  private showLeftBackground = 0;
+  private showLeftSprites = 0;
+  private showBackground = 0;
+  private showSprites = 0;
+  private spritePatternTable = 0;
 
-  // Secondary OAM
-  private secondaryOam: Uint8Array;     // 32 bytes for 8 sprites
-  private spritePatterns: Uint8Array;   // Pattern data for current scanline sprites
-  private spritePositions: Uint8Array;  // X positions for current scanline sprites
-  private spriteAttributes: Uint8Array;  // Attributes for current scanline sprites
-  private spriteIndexes: Uint8Array;    // Sprite indexes for sprite zero hit detection
+  // OAM and sprite data
+  private secondaryOam: number[] = new Array(32).fill(0);
+  private oamMemory: number[] = new Array(256).fill(0);
 
-  constructor() {
-    // Initialize memory
-    this.vram = new Uint8Array(0x4000);        // 16KB VRAM
-    this.oamMemory = new Uint8Array(256);      // 256B OAM
-    this.paletteRam = new Uint8Array(32);      // 32B Palette RAM
-    this.frameBuffer = new Uint8ClampedArray(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
+  constructor(memory: Memory) {
+    this.memory = memory;
+    this.vram = new Uint8Array(2048);  // 2KB of VRAM
+    this.oam = new Uint8Array(256);    // 256 bytes of Object Attribute Memory
+    this.frameBuffer = new Uint8ClampedArray(256 * 240 * 4); // RGBA buffer
+    this.paletteRam = new Uint8Array(32); // 32 bytes of palette RAM
+    this.reset();
+  }
 
-    // Initialize registers
+  reset(): void {
+    this.cycle = 0;
+    this.scanline = 0;
+    this.frame = 0;
+    this.nmiOccurred = 0;
     this.ctrl = 0;
     this.mask = 0;
     this.status = 0;
-    this.oamAddr = 0;
-    this.scroll = 0;
-    this.addr = 0;
     this.data = 0;
-
-    // Initialize internal state
     this.v = 0;
     this.t = 0;
     this.x = 0;
-    this.w = false;
-
-    // Initialize rendering position
-    this.scanline = 0;
-    this.cycle = 0;
-    this.frame = 0;
-
-    // Initialize NMI flags
-    this.nmiOccurred = false;
-    this.nmiOutput = false;
-    this.nmiPrevious = false;
-    this.nmiDelay = 0;
-
-    // Initialize background rendering state
-    this.bgPatternTable = 0;
-    this.bgNameTable = 0;
-    this.bgTileLow = 0;
-    this.bgTileHigh = 0;
-    this.bgAttributeLatch = 0;
+    this.w = 0;
+    this.oamAddr = 0;
+    this.nmiOutput = 0;
+    this.spriteCount = 0;
+    this.spriteZeroHitPossible = 0;
     this.bgShiftRegLow = 0;
     this.bgShiftRegHigh = 0;
     this.bgAttrShiftLow = 0;
     this.bgAttrShiftHigh = 0;
+    this.bgTileLow = 0;
+    this.bgTileHigh = 0;
+    this.spritePositions.fill(0);
+    this.spritePatterns.fill(0);
+    this.spriteAttributes.fill(0);
+    this.spriteIndexes.fill(0);
+    this.vram.fill(0);
+    this.oam.fill(0);
+    this.paletteRam.fill(0);
+    this.frameBuffer.fill(0);
+  }
 
-    // Initialize sprite rendering state
-    this.spritePatternTable = 0;
-    this.spriteSize = false;
-    this.spriteCount = 0;
-    this.spriteZeroHitPossible = false;
-    this.spriteZeroBeingRendered = false;
+  step(): void {
+    // Pre-render scanline (-1 or 261)
+    if (this.scanline === 261) {
+      if (this.cycle === 1) {
+        this.status &= ~0x80; // Clear VBlank
+        this.status &= ~0x40; // Clear sprite 0 hit
+        this.status &= ~0x20; // Clear sprite overflow
+      }
+    }
+    
+    // Visible scanlines (0-239)
+    if (this.scanline < 240) {
+      // Visible cycles (0-255)
+      if (this.cycle >= 1 && this.cycle <= 256) {
+        this.renderPixel();
+        this.fetchBackgroundTile();
+        this.updateShiftRegisters();
+      }
+      
+      // Sprite evaluation for next line
+      if (this.cycle === 257) {
+        this.evaluateSprites();
+      }
+    }
+    
+    // Post-render scanline (240)
+    // VBlank scanlines (241-260)
+    if (this.scanline === 241 && this.cycle === 1) {
+      this.status |= 0x80; // Set VBlank flag
+      if (this.nmiEnabled) {
+        this.nmiOccurred = 1;
+      }
+    }
 
-    // Initialize secondary OAM
-    this.secondaryOam = new Uint8Array(32);
-    this.spritePatterns = new Uint8Array(8 * 2);  // 8 sprites, 2 bytes each
-    this.spritePositions = new Uint8Array(8);
-    this.spriteAttributes = new Uint8Array(8);
-    this.spriteIndexes = new Uint8Array(8);
+    // Increment counters
+    this.cycle++;
+    if (this.cycle > 340) {
+      this.cycle = 0;
+      this.scanline++;
+      if (this.scanline > 261) {
+        this.scanline = 0;
+        this.frame++;
+      }
+    }
+  }
+
+  checkNMI(): number {
+    if (this.nmiOccurred === 1) {
+      this.nmiOccurred = 0;
+      return 1;
+    }
+    return 0;
+  }
+
+  renderFrame(): Uint8ClampedArray {
+    // Only return the frame buffer when we're in VBlank
+    if (this.scanline >= 241 && this.scanline <= 260) {
+      return this.frameBuffer;
+    }
+    // If not in VBlank, return the previous frame
+    return this.frameBuffer;
   }
 
   // Read from PPU registers (CPU perspective)
@@ -158,11 +204,11 @@ export class PPU {
         // Clear VBlank flag
         this.status &= 0x7F;
         // Reset address latch
-        this.w = false;
+        this.w = 0;
         return result;
       }
       case OAMDATA:
-        return this.oamMemory[this.oamAddr];
+        return this.readOAM(this.oamAddr);
       case PPUDATA: {
         // Get data from internal buffer
         const result = this.data;
@@ -182,18 +228,19 @@ export class PPU {
     switch (address) {
       case PPUCTRL:
         this.ctrl = value;
-        this.updatePPUCTRL(value);
-        this.nmiOutput = (value & 0x80) !== 0;
+        this.updateControlRegister(value);
+        this.nmiOutput = Number((value & 0x80) !== 0);
         this.t = (this.t & 0xF3FF) | ((value & 0x03) << 10);
         break;
       case PPUMASK:
         this.mask = value;
+        this.updateMaskRegister(value);
         break;
       case OAMADDR:
         this.oamAddr = value;
         break;
       case OAMDATA:
-        this.oamMemory[this.oamAddr] = value;
+        this.writeOAM(this.oamAddr, value);
         this.oamAddr = (this.oamAddr + 1) & 0xFF;
         break;
       case PPUSCROLL:
@@ -206,7 +253,7 @@ export class PPU {
           this.t = (this.t & 0x8FFF) | ((value & 0x07) << 12);
           this.t = (this.t & 0xFC1F) | ((value & 0xF8) << 2);
         }
-        this.w = !this.w;
+        this.w = Number(!this.w);
         break;
       case PPUADDR:
         if (!this.w) {
@@ -217,7 +264,7 @@ export class PPU {
           this.t = (this.t & 0xFF00) | value;
           this.v = this.t;
         }
-        this.w = !this.w;
+        this.w = Number(!this.w);
         break;
       case PPUDATA:
         this.writeVRAM(this.v, value);
@@ -228,25 +275,25 @@ export class PPU {
 
   // Read from PPU memory (internal)
   private readVRAM(address: number): number {
-    address &= 0x3FFF;
+    const mappedAddr = this.memory.mapPpuAddress(address);
     
-    if (address >= 0x3F00 && address < 0x4000) {
+    if (mappedAddr >= 0x3F00 && mappedAddr < 0x4000) {
       // Palette RAM
-      return this.paletteRam[address & 0x1F];
+      return this.paletteRam[mappedAddr & 0x1F];
     }
     
-    return this.vram[address];
+    return this.vram[mappedAddr & 0x0FFF];
   }
 
   // Write to PPU memory (internal)
   private writeVRAM(address: number, value: number): void {
-    address &= 0x3FFF;
+    const mappedAddr = this.memory.mapPpuAddress(address);
     
-    if (address >= 0x3F00 && address < 0x4000) {
+    if (mappedAddr >= 0x3F00 && mappedAddr < 0x4000) {
       // Palette RAM
-      this.paletteRam[address & 0x1F] = value;
+      this.paletteRam[mappedAddr & 0x1F] = value;
     } else {
-      this.vram[address] = value;
+      this.vram[mappedAddr & 0x0FFF] = value;
     }
   }
 
@@ -427,7 +474,7 @@ export class PPU {
     this.spriteCount = 0;
     let spriteHeight = this.spriteSize ? 16 : 8;
     let n = 0;
-    this.spriteZeroHitPossible = false;
+    this.spriteZeroHitPossible = Number(false);
 
     // Evaluate each sprite
     for (let i = 0; i < 64 && n < 8; i++) {
@@ -442,7 +489,7 @@ export class PPU {
       // Add sprite to secondary OAM
       if (n < 8) {
         if (i === 0) {
-          this.spriteZeroHitPossible = true;
+          this.spriteZeroHitPossible = Number(true);
         }
 
         this.spriteIndexes[n] = i;
@@ -481,116 +528,34 @@ export class PPU {
     this.spriteCount = n;
   }
 
-  // Execute one PPU cycle with background and sprite rendering
-  step(): void {
-    if (this.scanline >= -1 && this.scanline < 240) {
-      // Visible scanlines (and pre-render line)
-      if (this.scanline === -1 && this.cycle === 1) {
-        // Clear VBlank, sprite 0 hit, and sprite overflow flags
-        this.status &= ~0xE0;
-      }
-
-      if ((this.cycle >= 1 && this.cycle <= 256) || (this.cycle >= 321 && this.cycle <= 336)) {
-        this.updateShiftRegisters();
-        this.fetchBackgroundTile();
-      }
-
-      if (this.cycle >= 1 && this.cycle <= 256) {
-        this.renderPixel();
-      }
-
-      // Update vertical scroll
-      if (this.cycle === 256) {
-        this.incrementVerticalScroll();
-      }
-
-      // Update horizontal scroll
-      if (this.cycle === 257) {
-        this.copyHorizontalBits();
-      }
-
-      // Vertical scroll bits from t to v
-      if (this.scanline === -1 && this.cycle >= 280 && this.cycle <= 304) {
-        this.copyVerticalBits();
-      }
-
-      // Sprite evaluation (on cycle 257-320)
-      if (this.cycle === 257) {
-        this.evaluateSprites();
-      }
-    }
-
-    if (this.scanline === 241 && this.cycle === 1) {
-      // Start VBlank
-      this.status |= 0x80;
-      if (this.nmiOutput && !this.nmiOccurred) {
-        this.nmiOccurred = true;
-      }
-    }
-
-    // Advance cycle and scanline counters
-    this.cycle++;
-    if (this.cycle > 340) {
-      this.cycle = 0;
-      this.scanline++;
-      if (this.scanline > 260) {
-        this.scanline = -1;
-        this.frame++;
-      }
-    }
-  }
-
-  // Increment vertical scroll
-  private incrementVerticalScroll(): void {
-    if (!(this.mask & 0x08)) return;
-
-    // Increment fine Y
-    let v = this.v;
-    if ((v & 0x7000) !== 0x7000) {
-      v += 0x1000;
-    } else {
-      v &= ~0x7000;
-      let y = (v & 0x03E0) >> 5;
-      if (y === 29) {
-        y = 0;
-        v ^= 0x0800;
-      } else if (y === 31) {
-        y = 0;
-      } else {
-        y++;
-      }
-      v = (v & ~0x03E0) | (y << 5);
-    }
-    this.v = v;
-  }
-
-  // Copy horizontal scroll bits from t to v
-  private copyHorizontalBits(): void {
-    if (!(this.mask & 0x08)) return;
-    this.v = (this.v & ~0x041F) | (this.t & 0x041F);
-  }
-
-  // Copy vertical scroll bits from t to v
-  private copyVerticalBits(): void {
-    if (!(this.mask & 0x08)) return;
-    this.v = (this.v & ~0x7BE0) | (this.t & 0x7BE0);
-  }
-
-  // Get the current frame buffer
-  renderFrame(): Uint8ClampedArray {
-    return this.frameBuffer;
-  }
-
-  // Check if NMI should be triggered
-  checkNMI(): boolean {
-    const nmi = this.nmiOccurred;
-    this.nmiOccurred = false;
-    return nmi;
-  }
-
   // Update PPUCTRL ($2000) with sprite-specific flags
-  private updatePPUCTRL(value: number): void {
-    this.spritePatternTable = (value & 0x08) ? 1 : 0;
-    this.spriteSize = (value & 0x20) !== 0;
+  private updateControlRegister(value: number): void {
+    this.nmiEnabled = this.convertBoolToNum((value & 0x80) !== 0);
+    this.masterSlave = this.convertBoolToNum((value & 0x40) !== 0);
+    this.spriteSize = this.convertBoolToNum((value & 0x20) !== 0);
+    this.bgPatternAddr = this.convertBoolToNum((value & 0x10) !== 0);
+    this.spritePatternTable = this.convertBoolToNum((value & 0x08) !== 0);
+  }
+
+  private updateMaskRegister(value: number): void {
+    this.grayscale = this.convertBoolToNum((value & 0x01) !== 0);
+    this.showLeftBackground = this.convertBoolToNum((value & 0x02) !== 0);
+    this.showLeftSprites = this.convertBoolToNum((value & 0x04) !== 0);
+    this.showBackground = this.convertBoolToNum((value & 0x08) !== 0);
+    this.showSprites = this.convertBoolToNum((value & 0x10) !== 0);
+  }
+
+  // Convert boolean to number where needed
+  private convertBoolToNum(value: boolean): number {
+    return value ? 1 : 0;
+  }
+
+  // Replace oamMemory with oam
+  private readOAM(addr: number): number {
+    return this.oam[addr];
+  }
+
+  private writeOAM(addr: number, value: number): void {
+    this.oam[addr] = value;
   }
 } 

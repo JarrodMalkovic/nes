@@ -36,10 +36,14 @@ const createDefaultRom = () => {
     resetVector: 0x8000,
   })
 }
+
 function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [consoleInstance, setConsoleInstance] = useState<NesConsole | null>(null);
+  const [romName, setRomName] = useState<string>('');
+  const [error, setError] = useState<string>('');
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const animationFrameId = useRef<number | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
@@ -69,7 +73,8 @@ function App() {
       animationFrameId.current = requestAnimationFrame(gameLoop);
     } catch (error) {
       console.error('Emulator crashed:', error);
-      setIsRunning(false); // Stop the loop on error
+      setError('Emulator crashed: ' + (error as Error).message);
+      setIsRunning(false);
     }
   }, [isRunning, consoleInstance]);
 
@@ -91,11 +96,36 @@ function App() {
     };
   }, [isRunning, gameLoop]);
 
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setError('');
+      // Read the ROM file
+      const buffer = await file.arrayBuffer();
+      const romData = new Uint8Array(buffer);
+      
+      // Create new console instance with the ROM
+      const newConsole = new NesConsole(romData);
+      setConsoleInstance(newConsole);
+      setRomName(file.name);
+      
+      // Auto-start the emulator
+      setIsRunning(true);
+    } catch (error) {
+      console.error('Failed to load ROM:', error);
+      setError('Failed to load ROM: ' + (error as Error).message);
+    }
+  };
+
   const handleStartClick = () => {
     if (!consoleInstance) {
-      console.log('Initializing NES Console...');
+      // Only use default ROM if no ROM is loaded
+      console.log('Initializing NES Console with default ROM...');
       const romData = createDefaultRom();
       setConsoleInstance(new NesConsole(romData));
+      setRomName('Default Test ROM');
     }
     console.log('Starting emulator loop...');
     setIsRunning(true);
@@ -106,27 +136,69 @@ function App() {
     setIsRunning(false);
   };
 
+  const handleReset = () => {
+    if (consoleInstance) {
+      consoleInstance.cpu.reset();
+    }
+  };
+
   return (
-    <>
-      <h1>My NES Emulator</h1>
-      <canvas
-        ref={canvasRef}
-        width={SCREEN_WIDTH}
-        height={SCREEN_HEIGHT}
-        style={{ border: '1px solid grey', imageRendering: 'pixelated', width: SCREEN_WIDTH*2, height: SCREEN_HEIGHT*2 }}
-      />
-      <div className="card">
+    <div className="emulator-container">
+      <h1>NES Emulator</h1>
+      
+      <div className="rom-controls">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".nes"
+          onChange={handleFileSelect}
+          style={{ display: 'none' }}
+        />
+        <button 
+          onClick={() => fileInputRef.current?.click()}
+          className="load-rom-btn"
+        >
+          Load ROM
+        </button>
         {!isRunning ? (
-          <button onClick={handleStartClick}>Start</button>
+          <button onClick={handleStartClick} disabled={!!error}>Start</button>
         ) : (
           <button onClick={handleStopClick}>Stop</button>
         )}
+        <button onClick={handleReset} disabled={!consoleInstance}>Reset</button>
       </div>
-      {/* Basic info display */}
-      {consoleInstance && (
-        <p>Cartridge loaded ({consoleInstance.cartridge.prgBanks.length} PRG banks)</p>
-      )}
-    </>
+
+      <div className="screen-container">
+        <canvas
+          ref={canvasRef}
+          width={SCREEN_WIDTH}
+          height={SCREEN_HEIGHT}
+          style={{ 
+            border: '1px solid grey', 
+            imageRendering: 'pixelated', 
+            width: SCREEN_WIDTH*2, 
+            height: SCREEN_HEIGHT*2,
+            backgroundColor: 'black' 
+          }}
+        />
+      </div>
+
+      <div className="status-info">
+        {romName && (
+          <p className="rom-info">Loaded ROM: {romName}</p>
+        )}
+        {error && (
+          <p className="error-message">{error}</p>
+        )}
+        {consoleInstance && (
+          <div className="console-info">
+            <p>PRG ROM Banks: {consoleInstance.cartridge.prgBanks.length}</p>
+            <p>CHR ROM Banks: {consoleInstance.cartridge.chrBanks.length}</p>
+            <p>Mapper: {consoleInstance.cartridge.mapper}</p>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
