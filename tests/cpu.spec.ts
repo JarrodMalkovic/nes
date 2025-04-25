@@ -475,4 +475,85 @@ describe('CPU', () => {
       expect(cpu.SR & CpuFlags.Unused).toBe(CpuFlags.Unused);
     });
   });
+
+  describe('Interrupt Instructions', () => {
+    let memory: Memory;
+    let cpu: CPU;
+
+    beforeEach(() => {
+      const program = new Uint8Array(PRG_BANK_SIZE);
+      // Set up IRQ vector to point to 0xA000
+      const irqHandler = 0xA000;
+      program[irqHandler - 0x8000] = 0x40; // RTI
+
+      const romData = createFakeNromRom({
+        numPrgBanks: 1,
+        prgData: [program],
+        resetVector: 0x8000
+      });
+      const cartridge = new Cartridge(romData);
+      memory = new Memory();
+      memory.loadCartridge(cartridge);
+      cpu = new CPU(memory);
+
+      // Set up IRQ vector
+      memory.write(0xFFFE, irqHandler & 0xFF);
+      memory.write(0xFFFF, irqHandler >> 8);
+    });
+
+    it('should handle CLI instruction correctly', () => {
+      cpu.PC = 0x8000;
+      cpu.setFlag(CpuFlags.InterruptDisable, true);
+      memory.write(0x8000, 0x58); // CLI
+
+      const cycles = cpu.step();
+      expect(cycles).toBe(2);
+      expect(cpu.interruptDisableFlag).toBe(false);
+    });
+
+    it('should handle SEI instruction correctly', () => {
+      cpu.PC = 0x8000;
+      cpu.setFlag(CpuFlags.InterruptDisable, false);
+      memory.write(0x8000, 0x78); // SEI
+
+      const cycles = cpu.step();
+      expect(cycles).toBe(2);
+      expect(cpu.interruptDisableFlag).toBe(true);
+    });
+
+    it('should handle BRK instruction correctly', () => {
+      cpu.PC = 0x8000;
+      const originalSR = cpu.SR;
+      memory.write(0x8000, 0x00); // BRK
+      memory.write(0x8001, 0x00); // Padding byte
+
+      const cycles = cpu.step();
+      expect(cycles).toBe(7);
+      expect(cpu.PC).toBe(0xA000); // Should jump to IRQ handler
+      expect(cpu.interruptDisableFlag).toBe(true);
+
+      // Stack should contain return address and status
+      const stackedPC = memory.read(0x0100 | ((cpu.SP + 1) & 0xFF)) |
+                       (memory.read(0x0100 | ((cpu.SP + 2) & 0xFF)) << 8);
+      const stackedStatus = memory.read(0x0100 | ((cpu.SP + 3) & 0xFF));
+      
+      // PC+2 should be pushed (to skip BRK and padding byte)
+      expect(stackedPC).toBe(0x8002);
+      // Break flag should be set in pushed SR
+      expect(stackedStatus & CpuFlags.Break).toBe(CpuFlags.Break);
+      expect(stackedStatus & CpuFlags.Unused).toBe(CpuFlags.Unused);
+    });
+
+    it('should handle BRK with existing interrupt disable', () => {
+      cpu.PC = 0x8000;
+      cpu.setFlag(CpuFlags.InterruptDisable, true);
+      memory.write(0x8000, 0x00); // BRK
+      memory.write(0x8001, 0x00); // Padding byte
+
+      const cycles = cpu.step();
+      expect(cycles).toBe(7);
+      expect(cpu.PC).toBe(0xA000);
+      expect(cpu.interruptDisableFlag).toBe(true);
+    });
+  });
 }) 

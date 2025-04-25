@@ -45,6 +45,35 @@ export class CPU {
   private pendingNMI = false;
   private pendingIRQ = false;
 
+  // Flag access properties for testing
+  get zeroFlag(): boolean {
+    return this.getFlag(CpuFlags.Zero);
+  }
+
+  get negativeFlag(): boolean {
+    return this.getFlag(CpuFlags.Negative);
+  }
+
+  get carryFlag(): boolean {
+    return this.getFlag(CpuFlags.Carry);
+  }
+
+  get overflowFlag(): boolean {
+    return this.getFlag(CpuFlags.Overflow);
+  }
+
+  get interruptDisableFlag(): boolean {
+    return this.getFlag(CpuFlags.InterruptDisable);
+  }
+
+  get decimalFlag(): boolean {
+    return this.getFlag(CpuFlags.Decimal);
+  }
+
+  get breakFlag(): boolean {
+    return this.getFlag(CpuFlags.Break);
+  }
+
   constructor(memory: Memory) {
     this.memory = memory;
     this.populateInstructions();
@@ -251,12 +280,11 @@ export class CPU {
     return 2; // Base cycle count for EOR operation
   }
 
-  private bit(value: number): number {
+  private bit(value: number): void {
     const result = this.A & value;
     this.setFlag(CpuFlags.Zero, result === 0);
-    this.setFlag(CpuFlags.Negative, (value & 0x80) !== 0);
     this.setFlag(CpuFlags.Overflow, (value & 0x40) !== 0);
-    return 0;
+    this.setFlag(CpuFlags.Negative, (value & 0x80) !== 0);
   }
 
   // --- Increment/Decrement Helpers ---
@@ -274,32 +302,36 @@ export class CPU {
 
   // --- Shift and Rotate Helpers ---
   private asl(value: number): number {
-    this.setFlag(CpuFlags.Carry, (value & 0x80) !== 0);
     const result = (value << 1) & 0xFF;
-    this.updateZeroNegativeFlags(result);
+    this.setFlag(CpuFlags.Carry, (value & 0x80) !== 0);
+    this.setFlag(CpuFlags.Zero, result === 0);
+    this.setFlag(CpuFlags.Negative, (result & 0x80) !== 0);
     return result;
   }
 
   private lsr(value: number): number {
-    this.setFlag(CpuFlags.Carry, (value & 0x01) !== 0);
     const result = value >> 1;
-    this.updateZeroNegativeFlags(result);
+    this.setFlag(CpuFlags.Carry, (value & 0x01) !== 0);
+    this.setFlag(CpuFlags.Zero, result === 0);
+    this.setFlag(CpuFlags.Negative, false);
     return result;
   }
 
   private rol(value: number): number {
     const oldCarry = this.getFlag(CpuFlags.Carry) ? 1 : 0;
-    this.setFlag(CpuFlags.Carry, (value & 0x80) !== 0);
     const result = ((value << 1) | oldCarry) & 0xFF;
-    this.updateZeroNegativeFlags(result);
+    this.setFlag(CpuFlags.Carry, (value & 0x80) !== 0);
+    this.setFlag(CpuFlags.Zero, result === 0);
+    this.setFlag(CpuFlags.Negative, (result & 0x80) !== 0);
     return result;
   }
 
   private ror(value: number): number {
     const oldCarry = this.getFlag(CpuFlags.Carry) ? 0x80 : 0;
-    this.setFlag(CpuFlags.Carry, (value & 0x01) !== 0);
     const result = (value >> 1) | oldCarry;
-    this.updateZeroNegativeFlags(result);
+    this.setFlag(CpuFlags.Carry, (value & 0x01) !== 0);
+    this.setFlag(CpuFlags.Zero, result === 0);
+    this.setFlag(CpuFlags.Negative, (result & 0x80) !== 0);
     return result;
   }
 
@@ -312,13 +344,38 @@ export class CPU {
   private populateInstructions(): void {
     // BRK - Force Interrupt
     this.instructions[0x00] = {
-      bytes: 1,
+      bytes: 2, // Includes padding byte
       cycles: 7,
       execute: (cpu) => {
-        cpu.pushWord(cpu.PC + 2);
-        cpu.pushByte(cpu.SR);
-        cpu.PC = cpu.fetchWord();
-        cpu.setFlag(CpuFlags.Break, true);
+        // Push PC+2 (skip padding byte)
+        cpu.pushWord(cpu.PC + 1);
+        
+        // Push status with Break flag set
+        cpu.pushByte(cpu.SR | CpuFlags.Break);
+        
+        // Set Interrupt Disable flag
+        cpu.setFlag(CpuFlags.InterruptDisable, true);
+        
+        // Load IRQ vector
+        cpu.PC = cpu.memory.read(CPU.IRQ_VECTOR) | (cpu.memory.read(CPU.IRQ_VECTOR + 1) << 8);
+      }
+    };
+
+    // CLI - Clear Interrupt Disable
+    this.instructions[0x58] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.InterruptDisable, false);
+      }
+    };
+
+    // SEI - Set Interrupt Disable
+    this.instructions[0x78] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.InterruptDisable, true);
       }
     };
 
@@ -1092,6 +1149,529 @@ export class CPU {
       cycles: 6,
       execute: (cpu) => {
         cpu.returnFromInterrupt();
+      }
+    };
+
+    // --- Stack Operations ---
+
+    // PHA - Push Accumulator
+    this.instructions[0x48] = {
+      bytes: 1,
+      cycles: 3,
+      execute: (cpu) => {
+        cpu.pushByte(cpu.A);
+      }
+    };
+
+    // PHP - Push Processor Status
+    this.instructions[0x08] = {
+      bytes: 1,
+      cycles: 3,
+      execute: (cpu) => {
+        // When pushing SR, Break and Unused flags are always set
+        cpu.pushByte(cpu.SR | CpuFlags.Break | CpuFlags.Unused);
+      }
+    };
+
+    // PLA - Pull Accumulator
+    this.instructions[0x68] = {
+      bytes: 1,
+      cycles: 4,
+      execute: (cpu) => {
+        cpu.A = cpu.pullByte();
+        cpu.updateZeroNegativeFlags(cpu.A);
+      }
+    };
+
+    // PLP - Pull Processor Status
+    this.instructions[0x28] = {
+      bytes: 1,
+      cycles: 4,
+      execute: (cpu) => {
+        // When pulling SR, Break flag is ignored and Unused flag is always set
+        cpu.SR = (cpu.pullByte() & ~CpuFlags.Break) | CpuFlags.Unused;
+      }
+    };
+
+    // --- Register Transfer Instructions ---
+
+    // TAX - Transfer Accumulator to X
+    this.instructions[0xAA] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.X = cpu.A;
+        cpu.updateZeroNegativeFlags(cpu.X);
+      }
+    };
+
+    // TAY - Transfer Accumulator to Y
+    this.instructions[0xA8] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.Y = cpu.A;
+        cpu.updateZeroNegativeFlags(cpu.Y);
+      }
+    };
+
+    // TXA - Transfer X to Accumulator
+    this.instructions[0x8A] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.A = cpu.X;
+        cpu.updateZeroNegativeFlags(cpu.A);
+      }
+    };
+
+    // TYA - Transfer Y to Accumulator
+    this.instructions[0x98] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.A = cpu.Y;
+        cpu.updateZeroNegativeFlags(cpu.A);
+      }
+    };
+
+    // TSX - Transfer Stack Pointer to X
+    this.instructions[0xBA] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.X = cpu.SP;
+        cpu.updateZeroNegativeFlags(cpu.X);
+      }
+    };
+
+    // TXS - Transfer X to Stack Pointer
+    this.instructions[0x9A] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.SP = cpu.X;
+        // Note: TXS does not affect status flags
+      }
+    };
+
+    // --- Increment/Decrement Instructions ---
+
+    // INX - Increment X Register
+    this.instructions[0xE8] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.X = (cpu.X + 1) & 0xFF;
+        cpu.updateZeroNegativeFlags(cpu.X);
+      }
+    };
+
+    // INY - Increment Y Register
+    this.instructions[0xC8] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.Y = (cpu.Y + 1) & 0xFF;
+        cpu.updateZeroNegativeFlags(cpu.Y);
+      }
+    };
+
+    // DEX - Decrement X Register
+    this.instructions[0xCA] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.X = (cpu.X - 1) & 0xFF;
+        cpu.updateZeroNegativeFlags(cpu.X);
+      }
+    };
+
+    // DEY - Decrement Y Register
+    this.instructions[0x88] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.Y = (cpu.Y - 1) & 0xFF;
+        cpu.updateZeroNegativeFlags(cpu.Y);
+      }
+    };
+
+    // INC - Increment Memory
+    this.instructions[0xE6] = { // Zero Page
+      bytes: 2,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        cpu.incrementMemory(addr);
+      }
+    };
+
+    this.instructions[0xF6] = { // Zero Page,X
+      bytes: 2,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPageX();
+        cpu.incrementMemory(addr);
+      }
+    };
+
+    this.instructions[0xEE] = { // Absolute
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        cpu.incrementMemory(addr);
+      }
+    };
+
+    this.instructions[0xFE] = { // Absolute,X
+      bytes: 3,
+      cycles: 7,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsoluteX();
+        cpu.incrementMemory(addr);
+      }
+    };
+
+    // DEC - Decrement Memory
+    this.instructions[0xC6] = { // Zero Page
+      bytes: 2,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        cpu.decrementMemory(addr);
+      }
+    };
+
+    this.instructions[0xD6] = { // Zero Page,X
+      bytes: 2,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPageX();
+        cpu.decrementMemory(addr);
+      }
+    };
+
+    this.instructions[0xCE] = { // Absolute
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        cpu.decrementMemory(addr);
+      }
+    };
+
+    this.instructions[0xDE] = { // Absolute,X
+      bytes: 3,
+      cycles: 7,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsoluteX();
+        cpu.decrementMemory(addr);
+      }
+    };
+
+    // --- Bit Operation Instructions ---
+
+    // ASL - Arithmetic Shift Left
+    this.instructions[0x0A] = { // Accumulator
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.A = cpu.asl(cpu.A);
+      }
+    };
+
+    this.instructions[0x06] = { // Zero Page
+      bytes: 2,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.asl(value));
+      }
+    };
+
+    this.instructions[0x16] = { // Zero Page,X
+      bytes: 2,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPageX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.asl(value));
+      }
+    };
+
+    this.instructions[0x0E] = { // Absolute
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.asl(value));
+      }
+    };
+
+    this.instructions[0x1E] = { // Absolute,X
+      bytes: 3,
+      cycles: 7,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsoluteX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.asl(value));
+      }
+    };
+
+    // LSR - Logical Shift Right
+    this.instructions[0x4A] = { // Accumulator
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.A = cpu.lsr(cpu.A);
+      }
+    };
+
+    this.instructions[0x46] = { // Zero Page
+      bytes: 2,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.lsr(value));
+      }
+    };
+
+    this.instructions[0x56] = { // Zero Page,X
+      bytes: 2,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPageX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.lsr(value));
+      }
+    };
+
+    this.instructions[0x4E] = { // Absolute
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.lsr(value));
+      }
+    };
+
+    this.instructions[0x5E] = { // Absolute,X
+      bytes: 3,
+      cycles: 7,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsoluteX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.lsr(value));
+      }
+    };
+
+    // ROL - Rotate Left
+    this.instructions[0x2A] = { // Accumulator
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.A = cpu.rol(cpu.A);
+      }
+    };
+
+    this.instructions[0x26] = { // Zero Page
+      bytes: 2,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.rol(value));
+      }
+    };
+
+    this.instructions[0x36] = { // Zero Page,X
+      bytes: 2,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPageX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.rol(value));
+      }
+    };
+
+    this.instructions[0x2E] = { // Absolute
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.rol(value));
+      }
+    };
+
+    this.instructions[0x3E] = { // Absolute,X
+      bytes: 3,
+      cycles: 7,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsoluteX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.rol(value));
+      }
+    };
+
+    // ROR - Rotate Right
+    this.instructions[0x6A] = { // Accumulator
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.A = cpu.ror(cpu.A);
+      }
+    };
+
+    this.instructions[0x66] = { // Zero Page
+      bytes: 2,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.ror(value));
+      }
+    };
+
+    this.instructions[0x76] = { // Zero Page,X
+      bytes: 2,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPageX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.ror(value));
+      }
+    };
+
+    this.instructions[0x6E] = { // Absolute
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.ror(value));
+      }
+    };
+
+    this.instructions[0x7E] = { // Absolute,X
+      bytes: 3,
+      cycles: 7,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsoluteX();
+        const value = cpu.memory.read(addr);
+        cpu.memory.write(addr, cpu.ror(value));
+      }
+    };
+
+    // BIT - Bit Test
+    this.instructions[0x24] = { // Zero Page
+      bytes: 2,
+      cycles: 3,
+      execute: (cpu) => {
+        const addr = cpu.operandZeroPage();
+        const value = cpu.memory.read(addr);
+        cpu.bit(value);
+      }
+    };
+
+    this.instructions[0x2C] = { // Absolute
+      bytes: 3,
+      cycles: 4,
+      execute: (cpu) => {
+        const addr = cpu.operandAbsolute();
+        const value = cpu.memory.read(addr);
+        cpu.bit(value);
+      }
+    };
+
+    // --- Status Flag Instructions ---
+
+    // CLC - Clear Carry Flag
+    this.instructions[0x18] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.Carry, false);
+      }
+    };
+
+    // SEC - Set Carry Flag
+    this.instructions[0x38] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.Carry, true);
+      }
+    };
+
+    // CLV - Clear Overflow Flag
+    this.instructions[0xB8] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.Overflow, false);
+      }
+    };
+
+    // CLD - Clear Decimal Mode
+    this.instructions[0xD8] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.Decimal, false);
+      }
+    };
+
+    // SED - Set Decimal Mode
+    this.instructions[0xF8] = {
+      bytes: 1,
+      cycles: 2,
+      execute: (cpu) => {
+        cpu.setFlag(CpuFlags.Decimal, true);
+      }
+    };
+
+    // --- Additional Jump & Call Instructions ---
+
+    // JSR - Jump to Subroutine
+    this.instructions[0x20] = {
+      bytes: 3,
+      cycles: 6,
+      execute: (cpu) => {
+        const targetAddr = cpu.operandAbsolute();
+        // Push address of next instruction - 1
+        cpu.pushWord(cpu.PC - 1);
+        cpu.PC = targetAddr;
+      }
+    };
+
+    // RTS - Return from Subroutine
+    this.instructions[0x60] = {
+      bytes: 1,
+      cycles: 6,
+      execute: (cpu) => {
+        // Pull return address and add 1
+        cpu.PC = (cpu.pullWord() + 1) & 0xFFFF;
+      }
+    };
+
+    // JMP - Indirect
+    this.instructions[0x6C] = {
+      bytes: 3,
+      cycles: 5,
+      execute: (cpu) => {
+        const addr = cpu.fetchWord();
+        // 6502 bug: If indirect vector falls on a page boundary (e.g. $xxFF)
+        // the second byte is fetched from the beginning of the page rather than the next page
+        const lo = cpu.memory.read(addr);
+        const hi = cpu.memory.read((addr & 0xFF00) | ((addr + 1) & 0xFF));
+        cpu.PC = (hi << 8) | lo;
       }
     };
   }
