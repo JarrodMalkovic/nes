@@ -53,8 +53,8 @@ function App() {
       ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
       if (ctxRef.current) {
         // Initial black screen draw
-        ctxRef.current.fillStyle = 'black';
-        ctxRef.current.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        //ctxRef.current.fillStyle = 'black';
+        //ctxRef.current.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
       }
     }
   }, []);
@@ -67,6 +67,7 @@ function App() {
 
     try {
       const frameBuffer = consoleInstance.runFrame();
+      console.log('frameBuffer', frameBuffer);
       const imageData = new ImageData(frameBuffer, SCREEN_WIDTH, SCREEN_HEIGHT);
       ctxRef.current.putImageData(imageData, 0, 0);
 

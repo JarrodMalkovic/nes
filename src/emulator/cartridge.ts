@@ -33,6 +33,8 @@ export class Cartridge {
   selectedChrBank: number;
 
   constructor(romData: Uint8Array) {
+    console.log('Initializing cartridge with ROM size:', romData.length);
+    
     // Parse iNES header
     if (romData.length < INES_HEADER_SIZE) {
       throw new Error('Invalid ROM: File too small');
@@ -49,6 +51,15 @@ export class Cartridge {
     const chrRomSize = romData[5] * CHR_BANK_SIZE;
     const flags6 = romData[6];
     const flags7 = romData[7];
+
+    console.log('ROM Header:', {
+      prgBanks: romData[4],
+      chrBanks: romData[5],
+      prgRomSize,
+      chrRomSize,
+      flags6: flags6.toString(16),
+      flags7: flags7.toString(16)
+    });
 
     // Get mapper number
     this.mapper = (flags7 & 0xF0) | (flags6 >> 4);
@@ -94,6 +105,17 @@ export class Cartridge {
         this.chrBanks.push(bank);
       }
     }
+
+    console.log('Cartridge initialized:', {
+      mapper: this.mapper,
+      mirroring: this.mirroring,
+      hasBatteryBackedRam: this.hasBatteryBackedRam,
+      hasTrainer: this.hasTrainer,
+      prgBanks: this.prgBanks.length,
+      chrBanks: this.chrBanks.length,
+      chrRomSize,
+      offset
+    });
 
     // Initialize bank switching state
     this.prgBankMode = 0;
@@ -154,8 +176,17 @@ export class Cartridge {
     switch (this.mapper) {
       case 0: // NROM
         if (this.chrBanks.length > 0) {
+          console.log('Reading CHR ROM:', {
+            address: address.toString(16),
+            value: this.chrBanks[0][address].toString(16),
+            chrBanksLength: this.chrBanks.length
+          });
           return this.chrBanks[0][address];
         } else {
+          console.log('Reading CHR RAM:', {
+            address: address.toString(16),
+            value: this.chrRam[address].toString(16)
+          });
           return this.chrRam[address];
         }
 
@@ -187,5 +218,41 @@ export class Cartridge {
   // Get the current mirroring mode for nametable mapping
   getMirroringMode(): MirroringMode {
     return this.mirroring;
+  }
+
+  // Mirror VRAM address according to current mirroring mode
+  mirrorVramAddress(address: number): number {
+    // Ensure address is in VRAM range (0x2000-0x3EFF)
+    address = (address - 0x2000) & 0x0FFF;
+
+    // The NES has 2KB of VRAM, arranged as 4 1KB nametables
+    // Only the first 2 nametables are physical, the other 2 are mirrors
+    switch (this.mirroring) {
+      case MirroringMode.Horizontal:
+        // 0: A, 1: A, 2: B, 3: B
+        if (address >= 0x0800 && address < 0x1000) {
+          address -= 0x0800;
+        }
+        break;
+      case MirroringMode.Vertical:
+        // 0: A, 1: B, 2: A, 3: B
+        if (address >= 0x0800) {
+          address -= 0x0800;
+        }
+        break;
+      case MirroringMode.SingleScreenLow:
+        // All nametables mirror the first one
+        address &= 0x03FF;
+        break;
+      case MirroringMode.SingleScreenHigh:
+        // All nametables mirror the second one
+        address = (address & 0x03FF) + 0x0400;
+        break;
+      case MirroringMode.FourScreen:
+        // No mirroring
+        break;
+    }
+
+    return address + 0x2000;
   }
 } 

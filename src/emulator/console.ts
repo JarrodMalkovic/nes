@@ -17,6 +17,7 @@ export class NesConsole {
     this.cartridge = new Cartridge(romData);
     this.memory = new Memory(this.cartridge);
     this.ppu = new PPU(this.memory);  // Pass memory to PPU for VRAM access
+    this.memory.setPpu(this.ppu);     // Connect PPU to memory for register access
     this.cpu = new CPU(this.memory);
     
     // Initial reset
@@ -29,8 +30,9 @@ export class NesConsole {
     // Update memory with new cartridge
     this.memory = new Memory(this.cartridge);
     // Update CPU and PPU with new memory
-    this.cpu = new CPU(this.memory);
     this.ppu = new PPU(this.memory);
+    this.memory.setPpu(this.ppu);     // Connect PPU to memory
+    this.cpu = new CPU(this.memory);
     // Reset everything
     this.reset();
   }
